@@ -31,6 +31,10 @@ const COLORS: Record<string, number> = {
   C: 0x645d57, // dark stone
   m: 0x6b5a6e, // crypt purple
   e: 0x9ad06a, // screen green
+  z: 0x7fae5a, // zombie skin
+  Z: 0x5e8a44, // zombie shade
+  P: 0x4a3b5c, // trousers
+  N: 0xc9bfae, // bone shade
 };
 
 const SPRITES: Record<string, string[]> = {
@@ -209,6 +213,51 @@ const SPRITES: Record<string, string[]> = {
     'TTTTTTTT',
   ],
 };
+
+const ZOMBIE_TOP = [
+  '..hhh...',
+  '.zzzzz..',
+  '.zzzkz..',
+  '.zzzzzz.',
+  '..zzZ...',
+  '.bbbbzzz',
+  '.bbbbb..',
+  '.bbbbb..',
+  '.PPPPP..',
+];
+const SKELETON_TOP = [
+  '..nnn...',
+  '.nnnnn..',
+  '.nkknk..',
+  '.nnnnn..',
+  '..nkn...',
+  '..nnn...',
+  '.nNnNnnn',
+  '.nNnNn..',
+  '..nnn...',
+];
+const PILGRIM_HAT = ['..kkkk..', '..kyyk..', '.kkkkkk.'];
+const LEGS_A = (c: string) => [`.${c}${c}.${c}${c}..`, `.${c}${c}..${c}${c}.`, `.${c}....${c}.`, 'kk....kk'];
+const LEGS_B = (c: string) => [`..${c}${c}${c}...`, `..${c}${c}${c}...`, `..${c}.${c}...`, '..kk.kk.'];
+
+/** Monster patrons, each with two walking frames: `${kind}_0` and `${kind}_1`. */
+export const MONSTER_KINDS = ['zombie', 'skeleton', 'pilgrim', 'skelpilgrim'] as const;
+export type MonsterKind = (typeof MONSTER_KINDS)[number];
+const MONSTERS: Record<MonsterKind, [string[], string[]]> = {
+  zombie: [[...ZOMBIE_TOP, ...LEGS_A('P')], [...ZOMBIE_TOP, ...LEGS_B('P')]],
+  skeleton: [[...SKELETON_TOP, ...LEGS_A('n')], [...SKELETON_TOP, ...LEGS_B('n')]],
+  pilgrim: [
+    [...PILGRIM_HAT, ...ZOMBIE_TOP.slice(1), ...LEGS_A('P')],
+    [...PILGRIM_HAT, ...ZOMBIE_TOP.slice(1), ...LEGS_B('P')],
+  ],
+  skelpilgrim: [
+    [...PILGRIM_HAT, ...SKELETON_TOP.slice(1), ...LEGS_A('n')],
+    [...PILGRIM_HAT, ...SKELETON_TOP.slice(1), ...LEGS_B('n')],
+  ],
+};
+for (const [kind, frames] of Object.entries(MONSTERS)) {
+  frames.forEach((rows, i) => (SPRITES[`${kind}_${i}`] = rows));
+}
 
 /** Generates every sprite above as a texture keyed by its name. */
 export function buildSprites(scene: Phaser.Scene) {

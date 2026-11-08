@@ -5,6 +5,8 @@
 export interface RoomDef {
   id: string;
   name: string;
+  /** Name that fits on a build button. */
+  short: string;
   /** Width in cells. */
   width: number;
   cost: number;
@@ -14,6 +16,12 @@ export interface RoomDef {
   accent: number;
   kind: 'lobby' | 'home' | 'food' | 'shop' | 'office' | 'transport';
   description: string;
+  /** Homes and offices: money paid each day while occupied. */
+  rent?: number;
+  /** Food and shops: money each visitor spends. */
+  spend?: number;
+  /** Residents (homes), workers (offices) or visitors at once (food, shops). */
+  capacity?: number;
 }
 
 export interface Theme {
@@ -39,5 +47,7 @@ export interface Theme {
   particleColors: number[];
   rooms: RoomDef[];
   foods: string[];
+  /** Silly names for monster patrons. */
+  names: string[];
   decor: string[];
 }

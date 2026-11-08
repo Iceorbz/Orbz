@@ -7,17 +7,26 @@ export interface PlacedRoom {
   def: RoomDef;
   floor: number;
   cell: number;
+  /** Ids of monsters who live or work here, or are visiting right now. */
+  occupants: number[];
+  earnedToday: number;
+  earnedTotal: number;
+  /** Game minute when a vacant home or office will next attract tenants. */
+  nextTenantAt?: number;
 }
 
 export type PlaceCheck = { ok: true } | { ok: false; reason: string };
 
 export const START_MONEY = 100_000;
-/** Fraction of a room's cost refunded when it is demolished. */
+/** Fraction of the cost refunded when something is demolished. */
 export const REFUND = 0.5;
+/** Cost of one cell of empty floor. */
+export const FLOOR_COST = 500;
 
 /**
- * The tower's data model: money and which cells of which floors hold which rooms.
- * Emits 'room-added', 'room-removed' and 'money' events; scenes listen and redraw.
+ * The tower's data model: money, empty floor slabs, and which cells hold which rooms.
+ * Floor 0 is the ground; every other floor needs floor slabs before rooms can go in.
+ * Emits 'room-added', 'room-removed', 'floors' and 'money'.
  */
 export class Tower extends Phaser.Events.EventEmitter {
   money = START_MONEY;
@@ -25,6 +34,8 @@ export class Tower extends Phaser.Events.EventEmitter {
   private nextUid = 1;
   /** floor -> cell -> room uid */
   private grid = new Map<number, (number | null)[]>();
+  /** floor -> cell -> has an empty floor slab */
+  private slabs = new Map<number, boolean[]>();
 
   constructor(readonly theme: Theme) {
     super();
@@ -41,25 +52,108 @@ export class Tower extends Phaser.Events.EventEmitter {
     return uid ? this.rooms.get(uid) : undefined;
   }
 
-  private occupied(floor: number, cell: number) {
+  occupied(floor: number, cell: number) {
     return !!this.grid.get(floor)?.[cell];
+  }
+
+  hasSlab(floor: number, cell: number) {
+    return !!this.slabs.get(floor)?.[cell];
+  }
+
+  /** Floors (other than the ground) that have at least one slab, for drawing. */
+  slabRows(): [number, boolean[]][] {
+    return [...this.slabs.entries()];
+  }
+
+  /** A floor slab rests on the slab below it, or on a ground-floor room. Basements hang the other way. */
+  private slabSupported(floor: number, cell: number) {
+    const next = floor > 0 ? floor - 1 : floor + 1;
+    return next === 0 ? this.occupied(0, cell) : this.hasSlab(next, cell);
+  }
+
+  canPlaceSlab(floor: number, cell: number): PlaceCheck {
+    if (floor === 0) return { ok: false, reason: 'The ground floor needs no floor' };
+    if (cell < 0 || cell >= LOT_CELLS) return { ok: false, reason: 'Off the edge of the lot' };
+    if (floor >= MAX_FLOORS || floor < -MAX_BASEMENTS) return { ok: false, reason: 'Too far' };
+    if (this.hasSlab(floor, cell)) return { ok: false, reason: 'Already built' };
+    if (!this.slabSupported(floor, cell)) {
+      return { ok: false, reason: floor > 0 ? 'Needs something underneath' : 'Basements go under the tower' };
+    }
+    if (this.money < FLOOR_COST) return { ok: false, reason: 'Not enough money' };
+    return { ok: true };
+  }
+
+  /** Builds slabs across [from, to]. Returns how many were built and the first problem hit. */
+  placeSlabs(floor: number, from: number, to: number): { placed: number; reason?: string } {
+    let placed = 0;
+    let reason: string | undefined;
+    for (let c = Math.min(from, to); c <= Math.max(from, to); c++) {
+      const check = this.canPlaceSlab(floor, c);
+      if (!check.ok) {
+        if (check.reason !== 'Already built') reason ??= check.reason;
+        continue;
+      }
+      let row = this.slabs.get(floor);
+      if (!row) this.slabs.set(floor, (row = new Array(LOT_CELLS).fill(false)));
+      row[c] = true;
+      this.money -= FLOOR_COST;
+      placed++;
+    }
+    if (placed) {
+      this.emit('money', this.money);
+      this.emit('floors');
+    }
+    return { placed, reason };
+  }
+
+  /** Slab cells in [from, to] that could be built, for previews. */
+  countPlaceableSlabs(floor: number, from: number, to: number) {
+    let n = 0;
+    for (let c = Math.min(from, to); c <= Math.max(from, to); c++) {
+      const check = this.canPlaceSlab(floor, c);
+      if (check.ok || check.reason === 'Not enough money') n++;
+    }
+    return n;
+  }
+
+  canRemoveSlab(floor: number, cell: number): PlaceCheck {
+    if (this.occupied(floor, cell)) return { ok: false, reason: 'Remove the room first' };
+    if (this.hasSlab(floor > 0 ? floor + 1 : floor - 1, cell)) {
+      return { ok: false, reason: floor > 0 ? 'Remove the floor above first' : 'Remove the floor below first' };
+    }
+    return { ok: true };
+  }
+
+  /** Removes the whole empty run of slab around a cell. */
+  removeSlabRun(floor: number, cell: number): PlaceCheck & { removed?: number } {
+    const row = this.slabs.get(floor);
+    if (!row?.[cell]) return { ok: false, reason: 'Nothing here' };
+    let a = cell;
+    let b = cell;
+    while (a > 0 && row[a - 1] && !this.occupied(floor, a - 1)) a--;
+    while (b < LOT_CELLS - 1 && row[b + 1] && !this.occupied(floor, b + 1)) b++;
+    let removed = 0;
+    for (let c = a; c <= b; c++) {
+      if (!this.canRemoveSlab(floor, c).ok) continue;
+      row[c] = false;
+      removed++;
+    }
+    if (!removed) return this.canRemoveSlab(floor, cell);
+    this.earn(Math.round(removed * FLOOR_COST * REFUND));
+    this.emit('floors');
+    return { ok: true, removed };
   }
 
   canPlace(def: RoomDef, floor: number, cell: number): PlaceCheck {
     if (def.kind === 'lobby') return { ok: false, reason: 'There is only one lobby' };
     if (cell < 0 || cell + def.width > LOT_CELLS) return { ok: false, reason: 'Off the edge of the lot' };
-    if (floor >= MAX_FLOORS || floor < -MAX_BASEMENTS) return { ok: false, reason: 'Too high' };
-    if (def.kind === 'transport' && floor === MAX_FLOORS - 1) return { ok: false, reason: 'Nothing above to connect to' };
+    if (floor >= MAX_FLOORS || floor < -MAX_BASEMENTS) return { ok: false, reason: 'Too far' };
     for (let c = cell; c < cell + def.width; c++) {
       if (this.occupied(floor, c)) return { ok: false, reason: 'Space is taken' };
     }
-    if (floor > 0) {
+    if (floor !== 0) {
       for (let c = cell; c < cell + def.width; c++) {
-        if (!this.occupied(floor - 1, c)) return { ok: false, reason: 'Needs a floor underneath' };
-      }
-    } else if (floor < 0) {
-      for (let c = cell; c < cell + def.width; c++) {
-        if (!this.occupied(floor + 1, c)) return { ok: false, reason: 'Basements must be under the tower' };
+        if (!this.hasSlab(floor, c)) return { ok: false, reason: 'Build a floor here first' };
       }
     }
     if (this.money < def.cost) return { ok: false, reason: 'Not enough money' };
@@ -76,11 +170,9 @@ export class Tower extends Phaser.Events.EventEmitter {
 
   canRemove(room: PlacedRoom): PlaceCheck {
     if (room.def.kind === 'lobby') return { ok: false, reason: "The lobby can't be demolished" };
-    // Something resting on this room (or hanging below a basement) would lose its support.
-    const neighbour = room.floor >= 0 ? room.floor + 1 : room.floor - 1;
-    for (let c = room.cell; c < room.cell + room.def.width; c++) {
-      if (this.occupied(neighbour, c)) {
-        return { ok: false, reason: room.floor >= 0 ? 'Remove what is above it first' : 'Remove what is below it first' };
+    if (room.floor === 0) {
+      for (let c = room.cell; c < room.cell + room.def.width; c++) {
+        if (this.hasSlab(1, c) || this.hasSlab(-1, c)) return { ok: false, reason: 'Remove the floors resting on it first' };
       }
     }
     return { ok: true };
@@ -107,10 +199,18 @@ export class Tower extends Phaser.Events.EventEmitter {
     this.emit('money', this.money);
   }
 
+  /** Money earned by a room: adds to its stats and the bank, and tells the view to show a pop-up. */
+  income(room: PlacedRoom, amount: number) {
+    room.earnedToday += amount;
+    room.earnedTotal += amount;
+    this.earn(amount);
+    this.emit('income', room, amount);
+  }
+
   private add(def: RoomDef, floor: number, cell: number) {
     let row = this.grid.get(floor);
     if (!row) this.grid.set(floor, (row = new Array(LOT_CELLS).fill(null)));
-    const room: PlacedRoom = { uid: this.nextUid++, def, floor, cell };
+    const room: PlacedRoom = { uid: this.nextUid++, def, floor, cell, occupants: [], earnedToday: 0, earnedTotal: 0 };
     for (let c = cell; c < cell + def.width; c++) row[c] = room.uid;
     this.rooms.set(room.uid, room);
     this.emit('room-added', room);

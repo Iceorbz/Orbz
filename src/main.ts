@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { TowerScene } from './scenes/TowerScene';
 import { UIScene } from './scenes/UIScene';
-import { tower } from './state';
+import { clock, tower, transit } from './state';
 
 const game = new Phaser.Game({
   type: Phaser.AUTO,
@@ -13,4 +13,4 @@ const game = new Phaser.Game({
 });
 
 // Handy for poking at the game from the browser console while it's a prototype.
-(window as unknown as { orbz: unknown }).orbz = { game, tower };
+(window as unknown as { orbz: unknown }).orbz = { game, tower, clock, transit };
