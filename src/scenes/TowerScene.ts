@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import {
-  CELL_W, FLOOR_H, GROUND_Y, LOT_CELLS, LOT_X, MAX_BASEMENTS, MAX_FLOORS,
+  CELL_W, FLOOR_H, GROUND_Y, LAND_BY_STARS, LOT_CELLS, LOT_X, MAX_BASEMENTS, MAX_FLOORS,
   WORLD_H, WORLD_W, cellX, floorY,
 } from '../config';
 import { activeTheme as theme } from '../themes';
@@ -101,6 +101,7 @@ export class TowerScene extends Phaser.Scene {
     const rating = new Rating(tower, this.people);
     world.rating = rating;
     rating.on('promoted', (stars: number, unlocked: string[]) => {
+      this.drawLand();
       this.events.emit('promoted', stars, unlocked);
       this.save();
     });
@@ -113,6 +114,7 @@ export class TowerScene extends Phaser.Scene {
       tower.init();
     }
     this.updateLobbySign();
+    this.drawLand();
     clock.on('hour', () => {
       rating.check();
       this.save();
@@ -188,18 +190,58 @@ export class TowerScene extends Phaser.Scene {
     this.add.tileSprite(0, GROUND_Y + 64, WORLD_W, 16 * rows, 'stone').setOrigin(0);
   }
 
+  private gridG!: Phaser.GameObjects.Graphics;
+  private landG!: Phaser.GameObjects.Graphics;
+  private landSigns: Phaser.GameObjects.Text[] = [];
+
   /** Faint floor and cell lines over the buildable lot. Toggled with G. */
   private drawGrid() {
-    const g = this.add.graphics();
+    this.landG = this.add.graphics();
+    this.gridG = this.add.graphics();
+    this.input.keyboard?.on('keydown-G', () => this.gridG.setVisible(!this.gridG.visible));
+  }
+
+  /**
+   * Shows the land you own: grid lines and fence posts at its edges, with the land you
+   * don't own yet shaded and signed with the star rating that unlocks it.
+   */
+  private drawLand() {
+    const [a, b] = tower.land();
+    const g = this.gridG.clear();
     g.lineStyle(1, 0xffffff, 0.1);
     const top = floorY(MAX_FLOORS - 1);
     const bottom = floorY(-MAX_BASEMENTS) + FLOOR_H;
-    for (let c = 0; c <= LOT_CELLS; c++) g.lineBetween(cellX(c), top, cellX(c), bottom);
+    for (let c = a; c <= b + 1; c++) g.lineBetween(cellX(c), top, cellX(c), bottom);
     for (let f = -MAX_BASEMENTS; f <= MAX_FLOORS; f++) {
       const y = floorY(f) + FLOOR_H;
-      g.lineBetween(LOT_X, y, cellX(LOT_CELLS), y);
+      g.lineBetween(cellX(a), y, cellX(b + 1), y);
     }
-    this.input.keyboard?.on('keydown-G', () => g.setVisible(!g.visible));
+    const l = this.landG.clear();
+    // Unowned ground is darker.
+    l.fillStyle(0x000000, 0.18).fillRect(0, GROUND_Y - 4, cellX(a), WORLD_H).fillRect(cellX(b + 1), GROUND_Y - 4, WORLD_W, WORLD_H);
+    // Fences at both edges of your land.
+    for (const x of [cellX(a), cellX(b + 1)]) {
+      for (let i = -3; i <= 3; i++) {
+        const px = x + i * 8;
+        l.fillStyle(0x7a5232, 1).fillRect(px - 2, GROUND_Y - 18, 4, 18);
+        l.fillStyle(0x5c3c24, 1).fillRect(px - 2, GROUND_Y - 18, 4, 3);
+      }
+      l.fillStyle(0x8a5a32, 1).fillRect(x - 26, GROUND_Y - 14, 52, 3).fillRect(x - 26, GROUND_Y - 8, 52, 3);
+    }
+    this.landSigns.forEach((t) => t.destroy());
+    this.landSigns = [];
+    const next = LAND_BY_STARS.findIndex((w, st) => st > tower.stars && w > LAND_BY_STARS[tower.stars]);
+    if (next > 0) {
+      for (const x of [cellX(a) - 60, cellX(b + 1) + 60]) {
+        this.landSigns.push(
+          this.add
+            .text(x, GROUND_Y - 24, `More land at ${'★'.repeat(next)}`, {
+              fontFamily: 'monospace', fontSize: '10px', color: '#fbe3b0', backgroundColor: '#5c3c24', padding: { x: 4, y: 2 },
+            })
+            .setOrigin(0.5, 1),
+        );
+      }
+    }
   }
 
   private addLeaves() {

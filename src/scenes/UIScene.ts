@@ -93,7 +93,7 @@ export class UIScene extends Phaser.Scene {
   }
 
   update() {
-    this.timeText.setText(`Day ${clock.day}  ${clock.dateLabel}  ${clock.label}`);
+    this.timeText.setText(`Day ${clock.day}  ${clock.label}`);
     this.starsText.setText('★'.repeat(tower.stars) + '☆'.repeat(5 - tower.stars));
     this.goalText.setText(world.rating?.progress() ?? '');
     if (tower.stars !== this.shownStars) {
@@ -397,10 +397,10 @@ export class UIScene extends Phaser.Scene {
     this.topLine.setSize(w, 3);
     this.speedGroup.setX(w - 4 * 46 - 6);
     this.newBtn.setX(w - 4 * 46 - 14);
-    this.starsText.setX(w - 4 * 46 - 230);
-    this.goalText.setX(w - 4 * 46 - 230);
+    this.starsText.setX(w - 4 * 46 - 300);
+    this.goalText.setX(w - 4 * 46 - 300);
     // Drop lower-priority text when the bar is too narrow.
-    this.timeText.setVisible(w > 860);
+    this.timeText.setVisible(w > 820);
     this.goalText.setVisible(w > 640);
     this.starsText.setVisible(w > 640);
     this.layoutMenu(w, h);

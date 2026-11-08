@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { CELL_W, FLOOR_H, LOT_CELLS, LOT_X, cellX, floorY } from '../config';
+import { CELL_W, FLOOR_H, cellX, floorY } from '../config';
 import { MONSTER_KINDS, type MonsterKind } from '../decor/sprites';
 import type { Clock } from './Clock';
 import type { PlacedRoom, Tower } from './Tower';
@@ -75,7 +75,8 @@ export class Monster implements Rider {
   enter() {
     this.floor = 0;
     this.y = 0;
-    this.x = Math.random() < 0.5 ? LOT_X - 24 : LOT_X + LOT_CELLS * CELL_W + 24;
+    const [a, b] = this.people.landEdges();
+    this.x = Math.random() < 0.5 ? a : b;
     this.state = 'walking';
     this.sprite.setVisible(true);
   }
@@ -96,8 +97,7 @@ export class Monster implements Rider {
 
   /** Walks to the nearest lot edge and disappears. */
   leave(activity = 'Heading out', then?: () => void) {
-    const left = LOT_X - 24;
-    const right = LOT_X + LOT_CELLS * CELL_W + 24;
+    const [left, right] = this.people.landEdges();
     const exitX = Math.abs(this.x - left) < Math.abs(this.x - right) ? left : right;
     const ok = this.goTo(0, exitX, activity, () => {
       this.state = 'away';
@@ -271,6 +271,12 @@ export class People extends Phaser.Events.EventEmitter {
         this.sendHomeOrAway(m);
       }
     });
+  }
+
+  /** Where monsters appear and disappear: just outside the land you own. */
+  landEdges(): [number, number] {
+    const [a, b] = this.tower.land();
+    return [cellX(a) - 24, cellX(b + 1) + 24];
   }
 
   private spawn(role: Role, kinds: readonly MonsterKind[] = MONSTER_KINDS) {

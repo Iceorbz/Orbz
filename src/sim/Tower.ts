@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { LOT_CELLS, MAX_BASEMENTS, MAX_FLOORS } from '../config';
+import { LAND_BY_STARS, LOT_CELLS, MAX_BASEMENTS, MAX_FLOORS, OLD_LOT_CELLS } from '../config';
 import type { RoomDef, Theme } from '../themes';
 
 export interface PlacedRoom {
@@ -18,6 +18,8 @@ export interface PlacedRoom {
 /** What gets written to the save slot. Monsters aren't saved: tenants move back in soon after loading. */
 export interface TowerSave {
   version: 1;
+  /** Lot width the cells were saved against (missing in early saves). */
+  lot?: number;
   money: number;
   time: number;
   stars: number;
@@ -59,6 +61,22 @@ export class Tower extends Phaser.Events.EventEmitter {
     this.add(lobby, 0, Math.floor((LOT_CELLS - lobby.width) / 2));
   }
 
+  /** First and last cell of the land owned at the current star rating. */
+  land(stars = this.stars): [number, number] {
+    const w = LAND_BY_STARS[Math.min(5, Math.max(1, stars))];
+    const start = Math.floor((LOT_CELLS - w) / 2);
+    return [start, start + w - 1];
+  }
+
+  /** Why a span of cells can't be built on, or null if it's all owned land. */
+  private landProblem(from: number, to: number): string | null {
+    const [a, b] = this.land();
+    if (from >= a && to <= b) return null;
+    if (from < 0 || to >= LOT_CELLS) return 'Off the edge of the lot';
+    const next = LAND_BY_STARS.findIndex((w, s) => s > this.stars && w > 0 && from >= this.land(s)[0] && to <= this.land(s)[1]);
+    return next > 0 ? `More land unlocks at ${next} stars` : 'Off the edge of the lot';
+  }
+
   roomAt(floor: number, cell: number): PlacedRoom | undefined {
     const uid = this.grid.get(floor)?.[cell];
     return uid ? this.rooms.get(uid) : undefined;
@@ -88,7 +106,8 @@ export class Tower extends Phaser.Events.EventEmitter {
   }
 
   canPlaceSlab(floor: number, cell: number): PlaceCheck {
-    if (cell < 0 || cell >= LOT_CELLS) return { ok: false, reason: 'Off the edge of the lot' };
+    const landWhy = this.landProblem(cell, cell);
+    if (landWhy) return { ok: false, reason: landWhy };
     if (floor >= MAX_FLOORS || floor < -MAX_BASEMENTS) return { ok: false, reason: 'Too far' };
     if (this.hasSlab(floor, cell) || (floor === 0 && this.occupied(0, cell))) return { ok: false, reason: 'Already built' };
     if (!this.slabSupported(floor, cell)) {
@@ -164,7 +183,8 @@ export class Tower extends Phaser.Events.EventEmitter {
   canPlace(def: RoomDef, floor: number, cell: number): PlaceCheck {
     if (def.kind === 'lobby') return { ok: false, reason: 'There is only one lobby' };
     if ((def.stars ?? 1) > this.stars) return { ok: false, reason: `Unlocks at ${def.stars} stars` };
-    if (cell < 0 || cell + def.width > LOT_CELLS) return { ok: false, reason: 'Off the edge of the lot' };
+    const landWhy = this.landProblem(cell, cell + def.width - 1);
+    if (landWhy) return { ok: false, reason: landWhy };
     if (floor >= MAX_FLOORS || floor < -MAX_BASEMENTS) return { ok: false, reason: 'Too far' };
     for (let c = cell; c < cell + def.width; c++) {
       if (this.occupied(floor, c)) return { ok: false, reason: 'Space is taken' };
@@ -230,6 +250,7 @@ export class Tower extends Phaser.Events.EventEmitter {
   serialize(time: number): TowerSave {
     return {
       version: 1,
+      lot: LOT_CELLS,
       money: this.money,
       time,
       stars: this.stars,
@@ -242,16 +263,18 @@ export class Tower extends Phaser.Events.EventEmitter {
   restore(save: TowerSave) {
     this.money = save.money;
     this.stars = save.stars ?? 1;
+    // Older saves used a narrower lot; shift everything so it stays centred.
+    const shift = Math.floor((LOT_CELLS - (save.lot ?? OLD_LOT_CELLS)) / 2);
     for (const [f, cells] of save.slabs) {
       const row = new Array(LOT_CELLS).fill(false);
-      cells.forEach((c) => (row[c] = true));
+      cells.forEach((c) => (row[c + shift] = true));
       this.slabs.set(f, row);
     }
     this.emit('floors');
     for (const r of save.rooms) {
       const def = this.theme.rooms.find((d) => d.id === r.id);
       if (!def) continue;
-      const room = this.add(def, r.floor, r.cell);
+      const room = this.add(def, r.floor, r.cell + shift);
       room.earnedTotal = r.earnedTotal;
     }
     this.emit('money', this.money);

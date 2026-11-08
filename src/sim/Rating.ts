@@ -44,6 +44,7 @@ export class Rating extends Phaser.Events.EventEmitter {
     if (this.people.population() >= g.population && hasNeed) {
       this.tower.stars = g.stars;
       const unlocked = this.tower.theme.rooms.filter((r) => r.stars === g.stars).map((r) => r.name);
+      unlocked.push('more land on both sides');
       this.emit('promoted', g.stars, unlocked);
     }
   }

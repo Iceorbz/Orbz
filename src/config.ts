@@ -2,7 +2,11 @@
 export const CELL_W = 16;
 export const FLOOR_H = 64;
 /** Number of cells across the buildable lot. */
-export const LOT_CELLS = 64;
+export const LOT_CELLS = 160;
+/** Width in cells of the land you own at each star rating (index = stars). Centred on the lot. */
+export const LAND_BY_STARS = [0, 64, 88, 112, 136, 160];
+/** Saves made before the lot was widened used a 64-cell lot. */
+export const OLD_LOT_CELLS = 64;
 /** Floors above ground the camera can scroll to. */
 export const MAX_FLOORS = 40;
 /** Floors below ground (basements). */
