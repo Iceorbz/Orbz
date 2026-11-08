@@ -10,7 +10,9 @@ import { drawRoom } from '../decor/rooms';
 import { drawFloors } from '../decor/floors';
 import { clock, tool, tower, transit, world, type Selection } from '../state';
 import { FLOOR_COST, type PlacedRoom } from '../sim/Tower';
-import { People } from '../sim/People';
+import { People, floorName } from '../sim/People';
+import { Rating } from '../sim/Rating';
+import { loadSave, writeSave } from '../save';
 
 /** Screen pixels the pointer may move before a press counts as a drag instead of a tap. */
 const CLICK_SLOP = 8;
@@ -26,6 +28,8 @@ interface Draft {
   end: number;
   /** Demolish target. */
   room?: PlacedRoom;
+  /** Elevators only: the highest floor of the shaft being drafted (floor is the lowest). */
+  top?: number;
 }
 
 export interface DraftView {
@@ -36,7 +40,7 @@ export interface DraftView {
   label: string;
 }
 
-type PressMode = 'pan' | 'move' | 'resize-left' | 'resize-right';
+type PressMode = 'pan' | 'move' | 'resize-left' | 'resize-right' | 'resize-top' | 'resize-bottom';
 
 /** The side-view cutaway of the tower: building, drafts, monsters and the camera. */
 export class TowerScene extends Phaser.Scene {
@@ -89,15 +93,55 @@ export class TowerScene extends Phaser.Scene {
     });
     tower.on('floors', () => drawFloors(this.floorG, tower));
     tower.on('income', (r: PlacedRoom, amount: number) => this.moneyPop(r, amount));
-    tower.init();
+    tower.on('floors', () => this.updateLobbySign());
 
     this.people = new People(this, tower, transit, clock);
     world.people = this.people;
     this.people.on('toast', (msg: string) => this.events.emit('toast', msg));
+    const rating = new Rating(tower, this.people);
+    world.rating = rating;
+    rating.on('promoted', (stars: number, unlocked: string[]) => {
+      this.events.emit('promoted', stars, unlocked);
+      this.save();
+    });
+
+    const saved = loadSave();
+    if (saved) {
+      tower.restore(saved);
+      clock.time = saved.time;
+    } else {
+      tower.init();
+    }
+    this.updateLobbySign();
+    clock.on('hour', () => {
+      rating.check();
+      this.save();
+    });
+    const saveNow = () => this.save();
+    window.addEventListener('pagehide', saveNow);
+    document.addEventListener('visibilitychange', saveNow);
 
     this.setupCamera();
     this.setupInput();
     this.scene.launch('ui');
+  }
+
+  save() {
+    // Starting over reloads the page; don't let the unload handler write the old tower back.
+    if ((window as unknown as { orbzNoSave?: boolean }).orbzNoSave) return;
+    writeSave(tower.serialize(clock.time));
+  }
+
+  /** The lobby's hanging sign only shows while nothing is built on top of the lobby. */
+  private updateLobbySign() {
+    const lobby = [...tower.rooms.values()].find((r) => r.def.kind === 'lobby');
+    if (!lobby) return;
+    let covered = false;
+    for (let c = lobby.cell; c < lobby.cell + lobby.def.width; c++) if (tower.hasSlab(1, c) || tower.occupied(1, c)) covered = true;
+    const view = this.roomViews.get(lobby.uid);
+    view?.list.forEach((o) => {
+      if ((o as Phaser.GameObjects.GameObject).name === 'lobby-sign') (o as Phaser.GameObjects.Image).setVisible(!covered);
+    });
   }
 
   update(_t: number, delta: number) {
@@ -194,7 +238,10 @@ export class TowerScene extends Phaser.Scene {
     const sel = this.selection;
     if (sel?.type === 'room') {
       const r = tower.rooms.get(sel.uid);
-      if (r) g.lineStyle(2, 0xf2c14e, 1).strokeRect(cellX(r.cell) - 1, floorY(r.floor) - 1, r.def.width * CELL_W + 2, FLOOR_H + 2);
+      if (r) {
+        const pulse = 0.6 + 0.4 * Math.sin(this.time.now / 200);
+        g.lineStyle(3, 0xf2c14e, pulse).strokeRect(cellX(r.cell) - 1, floorY(r.floor) - 1, r.def.width * CELL_W + 2, FLOOR_H + 2);
+      }
     } else if (sel?.type === 'monster') {
       const m = this.people.all.get(sel.id);
       if (m?.sprite.visible) {
@@ -230,7 +277,20 @@ export class TowerScene extends Phaser.Scene {
     const def = theme.rooms.find((r) => r.id === id);
     if (!def) return null;
     const start = Phaser.Math.Clamp(Math.round((centerX - LOT_X) / CELL_W - def.width / 2), 0, LOT_CELLS - def.width);
+    // Elevators draft as a shaft: drag the gold handles up or down to cover more floors.
+    if (id === 'elevator') return { tool: id, floor, cell: start, end: start + def.width - 1, top: floor };
     return { tool: id, floor, cell: start, end: start + def.width - 1 };
+  }
+
+  /** Floors an elevator draft would build on (skipping floors that already have this shaft). */
+  private shaftFloors(d: Draft) {
+    const floors: number[] = [];
+    for (let f = d.floor; f <= (d.top ?? d.floor); f++) {
+      const here = tower.roomAt(f, d.cell);
+      if (here?.def.id === 'elevator' && here.cell === d.cell) continue;
+      floors.push(f);
+    }
+    return floors;
   }
 
   private checkDraft(d: Draft): { ok: boolean; label: string } {
@@ -252,6 +312,26 @@ export class TowerScene extends Phaser.Scene {
       return c.ok ? { ok: true, label: 'Demolish empty floor' } : { ok: false, label: c.reason };
     }
     const def = theme.rooms.find((r) => r.id === d.tool)!;
+    if (d.top !== undefined) {
+      const floors = this.shaftFloors(d);
+      if (!floors.length) return { ok: false, label: 'Already built' };
+      let slabCells = 0;
+      for (const f of floors) {
+        for (let c = d.cell; c <= d.end; c++) {
+          if (tower.occupied(f, c)) return { ok: false, label: `${floorName(f)}: Space is taken` };
+          if (f === 0 || tower.hasSlab(f, c)) continue;
+          // Missing floor gets built too, as long as the shaft or something else holds it up.
+          const below = f > 0 ? f - 1 : f + 1;
+          const held = (below >= d.floor && below <= (d.top ?? d.floor)) || tower.slabSupported(f, c);
+          if (!held) return { ok: false, label: `${floorName(f)}: ${f > 0 ? 'Needs something underneath' : 'Basements go under the tower'}` };
+          slabCells++;
+        }
+      }
+      const cost = floors.length * def.cost + slabCells * FLOOR_COST;
+      if (cost > tower.money) return { ok: false, label: 'Not enough money' };
+      const extra = slabCells ? ' incl. floor' : '';
+      return { ok: true, label: `${def.short}  ${floors.length} floor${floors.length > 1 ? 's' : ''}  $${cost.toLocaleString()}${extra}` };
+    }
     const c = tower.canPlace(def, d.floor, d.cell);
     return c.ok ? { ok: true, label: `${def.name}  $${def.cost.toLocaleString()}` } : { ok: false, label: c.reason };
   }
@@ -269,6 +349,18 @@ export class TowerScene extends Phaser.Scene {
       const res = d.room ? tower.remove(d.room) : tower.removeSlabRun(d.floor, d.cell);
       msg = res.ok ? (d.room ? `Demolished ${d.room.def.name}` : 'Demolished empty floor') : res.reason;
       if (!res.ok) return this.events.emit('toast', msg);
+    } else if (d.top !== undefined) {
+      const check = this.checkDraft(d);
+      if (!check.ok) return this.events.emit('toast', check.label);
+      const def = theme.rooms.find((r) => r.id === d.tool)!;
+      const floors = this.shaftFloors(d);
+      // Build from the ground outwards so each new floor rests on the shaft below it.
+      floors.sort((a, b) => Math.abs(a) - Math.abs(b));
+      for (const f of floors) {
+        if (f !== 0) tower.placeSlabs(f, d.cell, d.end);
+        tower.place(def, f, d.cell);
+      }
+      msg = `Built ${def.short.toLowerCase()} on ${floors.length} floor${floors.length > 1 ? 's' : ''}`;
     } else {
       const def = theme.rooms.find((r) => r.id === d.tool)!;
       const res = tower.place(def, d.floor, d.cell);
@@ -294,7 +386,7 @@ export class TowerScene extends Phaser.Scene {
     const check = this.checkDraft(d);
     return {
       x: (cellX(d.cell) - v.x) * cam.zoom,
-      y: (floorY(d.floor) - v.y) * cam.zoom,
+      y: (floorY(d.top ?? d.floor) - v.y) * cam.zoom,
       w: (d.end - d.cell + 1) * CELL_W * cam.zoom,
       ok: check.ok,
       label: check.label,
@@ -307,13 +399,17 @@ export class TowerScene extends Phaser.Scene {
     const d = this.draft ?? this.hoverDraft();
     if (!d) return;
     const x = cellX(d.cell);
-    const y = floorY(d.floor);
+    const y = floorY(d.top ?? d.floor);
     const w = (d.end - d.cell + 1) * CELL_W;
+    const h = ((d.top ?? d.floor) - d.floor + 1) * FLOOR_H;
     const { ok, label } = this.checkDraft(d);
     const fill = d.tool === 'demolish' ? 0xff5533 : d.tool === 'floor' ? 0x7a5232 : theme.rooms.find((r) => r.id === d.tool)?.color ?? 0xffffff;
     const isDraft = d === this.draft;
-    this.ghost.fillStyle(fill, isDraft ? 0.7 : 0.4).fillRect(x, y, w, FLOOR_H);
-    this.ghost.lineStyle(2, ok ? 0x7cff6b : 0xff5533, 1).strokeRect(x, y, w, FLOOR_H);
+    this.ghost.fillStyle(fill, isDraft ? 0.7 : 0.4).fillRect(x, y, w, h);
+    this.ghost.lineStyle(2, ok ? 0x7cff6b : 0xff5533, 1).strokeRect(x, y, w, h);
+    if (isDraft && d.top !== undefined) {
+      this.ghost.fillStyle(0xf2c14e, 1).fillRect(x + w / 2 - 8, y - 3, 16, 6).fillRect(x + w / 2 - 8, y + h - 3, 16, 6);
+    }
     if (isDraft && d.tool === 'floor') {
       // Resize handles.
       this.ghost.fillStyle(0xf2c14e, 1).fillRect(x - 3, y + FLOOR_H / 2 - 8, 6, 16).fillRect(x + w - 3, y + FLOOR_H / 2 - 8, 6, 16);
@@ -325,7 +421,7 @@ export class TowerScene extends Phaser.Scene {
   /** Mouse-only preview that follows the cursor before anything is tapped. */
   private hoverDraft(): Draft | null {
     const p = this.hoverPointer;
-    if (!p || !tool.current || p.wasTouch) return null;
+    if (!p || !tool.current || tool.current === 'select' || p.wasTouch) return null;
     return this.makeDraft(tool.current, this.floorAt(p.worldY), p.worldX);
   }
 
@@ -340,9 +436,15 @@ export class TowerScene extends Phaser.Scene {
     if (!d) return null;
     const x = cellX(d.cell);
     const w = (d.end - d.cell + 1) * CELL_W;
-    const y = floorY(d.floor);
-    const pad = 10 / this.cameras.main.zoom;
-    if (p.worldY < y - pad || p.worldY > y + FLOOR_H + pad || p.worldX < x - pad || p.worldX > x + w + pad) return null;
+    const y = floorY(d.top ?? d.floor);
+    const h = ((d.top ?? d.floor) - d.floor + 1) * FLOOR_H;
+    // Fingers need a bigger target than a mouse pointer.
+    const pad = (p.wasTouch ? 22 : 10) / this.cameras.main.zoom;
+    if (p.worldY < y - pad || p.worldY > y + h + pad || p.worldX < x - pad || p.worldX > x + w + pad) return null;
+    if (d.top !== undefined) {
+      if (Math.abs(p.worldY - y) <= pad * 1.5) return 'resize-top';
+      if (Math.abs(p.worldY - (y + h)) <= pad * 1.5) return 'resize-bottom';
+    }
     if (d.tool === 'floor') {
       if (Math.abs(p.worldX - x) <= pad * 1.5) return 'resize-left';
       if (Math.abs(p.worldX - (x + w)) <= pad * 1.5) return 'resize-right';
@@ -352,7 +454,7 @@ export class TowerScene extends Phaser.Scene {
 
   private tap(p: Phaser.Input.Pointer) {
     const id = tool.current;
-    if (!id) {
+    if (!id || id === 'select') {
       const m = this.people.monsterAt(p.worldX, p.worldY);
       if (m) return this.select({ type: 'monster', id: m.id });
       const room = tower.roomAt(this.floorAt(p.worldY), Math.floor((p.worldX - LOT_X) / CELL_W));
@@ -468,6 +570,11 @@ export class TowerScene extends Phaser.Scene {
         d.cell = Phaser.Math.Clamp(base.cell + dc, 0, LOT_CELLS - 1 - len);
         d.end = d.cell + len;
         d.floor = base.floor + df;
+        if (base.top !== undefined) d.top = base.top + df;
+      } else if (pr.mode === 'resize-top') {
+        d.top = Math.max(d.floor, (base.top ?? base.floor) + df);
+      } else if (pr.mode === 'resize-bottom') {
+        d.floor = Math.min(d.top ?? d.floor, base.floor + df);
       } else if (pr.mode === 'resize-left') {
         d.cell = Phaser.Math.Clamp(base.cell + dc, 0, d.end);
       } else {

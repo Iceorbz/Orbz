@@ -16,6 +16,10 @@ type State = 'walking' | 'waiting' | 'riding' | 'climbing' | 'inside' | 'away';
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 const pick = <T>(list: readonly T[]) => list[Math.floor(Math.random() * list.length)];
 
+export function moodLabel(stress: number) {
+  return stress > 70 ? 'Furious' : stress > 40 ? 'Grumpy' : stress > 15 ? 'Fine' : 'Happy';
+}
+
 export function floorName(f: number) {
   return f === 0 ? 'Ground floor' : f > 0 ? `Floor ${f}` : `Basement ${-f}`;
 }
@@ -35,6 +39,9 @@ export class Monster implements Rider {
   /** Room they are visiting right now (food, shop). */
   visiting?: PlacedRoom;
   insideUntil = 0;
+  /** 0 is calm, 100 is furious. Long elevator waits raise it; time at home, work or a meal lowers it. */
+  stress = 0;
+  private waited = 0;
   /** Personal schedule offsets so everyone doesn't move at once. */
   readonly leaveAt = rand(8 * 60, 9.5 * 60);
   readonly returnAt = rand(16.5 * 60, 18.5 * 60);
@@ -145,6 +152,7 @@ export class Monster implements Rider {
   }
 
   board(shaft: Shaft) {
+    this.waited = 0;
     this.state = 'riding';
     this.shaft = shaft;
     this.queueOffset = rand(-8, 8);
@@ -177,6 +185,12 @@ export class Monster implements Rider {
       }
       case 'waiting':
         this.stride = 0;
+        this.waited += dt;
+        // The first ten minutes are fine; after that every minute in line hurts.
+        if (this.waited > 10) this.stress = Math.min(100, this.stress + 1.5 * dt);
+        break;
+      case 'inside':
+        this.stress = Math.max(0, this.stress - 0.12 * dt);
         break;
       case 'riding':
         if (this.shaft) {
@@ -213,6 +227,7 @@ export class Monster implements Rider {
     const frame = this.state === 'walking' || this.state === 'climbing' ? Math.floor(this.stride / 5) % 2 : 1;
     this.sprite.setTexture(`${this.kind}_${frame}`);
     this.sprite.setDepth(this.state === 'riding' ? 6 : 5);
+    this.sprite.setTint(this.stress > 70 ? 0xff8a7a : this.stress > 40 ? 0xffe08a : 0xffffff);
   }
 
   destroy() {
@@ -314,6 +329,15 @@ export class People extends Phaser.Events.EventEmitter {
       if (open && room.occupants.length < (def.capacity ?? 4) && Math.random() < 0.02 * dt) this.visitFromOutside(room);
     }
     if (this.clock.crossed(0, dt)) room.earnedToday = 0;
+    // Each night, fed-up tenants move out.
+    if ((def.kind === 'home' || def.kind === 'office') && room.occupants.length && this.clock.crossed(21 * 60, dt)) {
+      if (this.roomMood(room) > 65) {
+        this.emit('toast', `Tenants left the ${def.name} on ${floorName(room.floor).toLowerCase()}. The elevator waits were too long.`);
+        for (const m of [...this.all.values()]) if (m.base === room) this.quit(m);
+        room.occupants = [];
+        room.nextTenantAt = now + 12 * 60;
+      }
+    }
   }
 
   private moveIn(room: PlacedRoom) {
@@ -383,6 +407,7 @@ export class People extends Phaser.Events.EventEmitter {
     const ok = m.goTo(room.floor, cellX(room.cell) + rand(12, room.def.width * CELL_W - 12), `${verb} the ${room.def.name}`, () => {
       if (!this.tower.rooms.has(room.uid)) return this.afterVisit(m);
       this.tower.income(room, room.def.spend ?? 10);
+      m.stress = Math.max(0, m.stress - (room.def.kind === 'food' ? 20 : 10));
       const food = pick(this.tower.theme.foods);
       m.stayInside(room, this.clock.time + rand(30, 60), room.def.kind === 'food' ? `Eating ${food}` : 'Browsing the gourds');
     });
@@ -458,10 +483,23 @@ export class People extends Phaser.Events.EventEmitter {
     }
   }
 
+  /** Average stress of a room's tenants (0 when empty). */
+  roomMood(room: PlacedRoom) {
+    const list = room.occupants.map((id) => this.all.get(id)).filter((m): m is Monster => !!m && m.base === room);
+    return list.length ? list.reduce((a, m) => a + m.stress, 0) / list.length : 0;
+  }
+
+  /** Monsters who live or work in the tower. */
+  population() {
+    let n = 0;
+    for (const m of this.all.values()) if (m.base) n++;
+    return n;
+  }
+
   /** Text for the info panel. */
   describe(m: Monster): string[] {
     const where = m.state === 'away' ? 'Away' : m.state === 'riding' ? 'In the elevator' : floorName(Math.round(m.y));
-    const lines = [m.title, m.activity, `Where: ${where}`];
+    const lines = [m.title, m.activity, `Where: ${where}`, `Mood: ${moodLabel(m.stress)}`];
     if (m.base) lines.push(`${m.role === 'worker' ? 'Works at' : 'Lives in'}: ${m.base.def.name}, ${floorName(m.base.floor).toLowerCase()}`);
     else lines.push('Just visiting');
     return lines;

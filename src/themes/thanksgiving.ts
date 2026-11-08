@@ -31,7 +31,7 @@ export const thanksgiving: Theme = {
     },
     {
       id: 'feast', short: 'Feast Hall', name: 'Harvest Feast Hall', width: 12, cost: 15000, color: 0x8f3b1f, accent: 0xf2c14e,
-      kind: 'food', spend: 25, capacity: 12, description: 'Long tables, turkey legs and a lot of groaning.',
+      kind: 'food', stars: 2, spend: 25, capacity: 12, description: 'Long tables, turkey legs and a lot of groaning.',
     },
     {
       id: 'bakery', short: 'Pie Bakery', name: 'Pumpkin Pie Bakery', width: 6, cost: 8000, color: 0xd9822b, accent: 0xfbe3b0,
@@ -39,7 +39,7 @@ export const thanksgiving: Theme = {
     },
     {
       id: 'market', short: 'Market', name: 'Cornucopia Market', width: 10, cost: 12000, color: 0xb8862b, accent: 0x8a9a3b,
-      kind: 'shop', spend: 20, capacity: 8, description: 'Gourds, corn and bone-shaped candles.',
+      kind: 'shop', stars: 2, spend: 20, capacity: 8, description: 'Gourds, corn and bone-shaped candles.',
     },
     {
       id: 'office', short: 'Office', name: 'Haunted Office', width: 9, cost: 10000, color: 0x5a6b5e, accent: 0xb8862b,

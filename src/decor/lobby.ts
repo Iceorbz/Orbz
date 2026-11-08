@@ -142,12 +142,13 @@ export function drawLobby(scene: Phaser.Scene, theme: Theme, x: number, y: numbe
   const sign = scene.add.text(x + w / 2, y - 10, label, {
     fontFamily: 'monospace', fontSize: '11px', color: '#fbe3b0', fontStyle: 'bold',
     backgroundColor: '#5c3c24', padding: { x: 6, y: 3 },
-  }).setOrigin(0.5, 1);
-  g.lineStyle(1, 0x2a1a10, 1)
+  }).setOrigin(0.5, 1).setName('lobby-sign');
+  // Sign parts are named so the scene can hide them once a floor is built over the lobby.
+  scene.add.graphics().setName('lobby-sign').lineStyle(1, 0x2a1a10, 1)
     .lineBetween(sign.x - sign.width / 2 + 6, sign.y, sign.x - sign.width / 2 + 6, y - 6)
     .lineBetween(sign.x + sign.width / 2 - 6, sign.y, sign.x + sign.width / 2 - 6, y - 6);
-  scene.add.image(sign.x - sign.width / 2 - 6, y - 6, 'pumpkinSmall').setOrigin(0.5, 1);
-  scene.add.image(sign.x + sign.width / 2 + 6, y - 6, 'pumpkinSmall').setOrigin(0.5, 1);
+  scene.add.image(sign.x - sign.width / 2 - 6, y - 6, 'pumpkinSmall').setOrigin(0.5, 1).setName('lobby-sign');
+  scene.add.image(sign.x + sign.width / 2 + 6, y - 6, 'pumpkinSmall').setOrigin(0.5, 1).setName('lobby-sign');
 }
 
 /** A soft additive glow that flickers like candlelight. */

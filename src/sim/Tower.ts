@@ -15,6 +15,16 @@ export interface PlacedRoom {
   nextTenantAt?: number;
 }
 
+/** What gets written to the save slot. Monsters aren't saved: tenants move back in soon after loading. */
+export interface TowerSave {
+  version: 1;
+  money: number;
+  time: number;
+  stars: number;
+  rooms: { id: string; floor: number; cell: number; earnedTotal: number }[];
+  slabs: [number, number[]][];
+}
+
 export type PlaceCheck = { ok: true } | { ok: false; reason: string };
 
 export const START_MONEY = 100_000;
@@ -30,6 +40,8 @@ export const FLOOR_COST = 500;
  */
 export class Tower extends Phaser.Events.EventEmitter {
   money = START_MONEY;
+  /** Star rating, 1 to 5. Raised by the rating system as the tower grows. */
+  stars = 1;
   readonly rooms = new Map<number, PlacedRoom>();
   private nextUid = 1;
   /** floor -> cell -> room uid */
@@ -65,17 +77,20 @@ export class Tower extends Phaser.Events.EventEmitter {
     return [...this.slabs.entries()];
   }
 
-  /** A floor slab rests on the slab below it, or on a ground-floor room. Basements hang the other way. */
-  private slabSupported(floor: number, cell: number) {
+  /**
+   * A slab rests on the slab below it; ground-floor slabs rest on the ground. Anything on the
+   * ground floor (room or slab) holds up the floor above and the basement below.
+   */
+  slabSupported(floor: number, cell: number) {
+    if (floor === 0) return true;
     const next = floor > 0 ? floor - 1 : floor + 1;
-    return next === 0 ? this.occupied(0, cell) : this.hasSlab(next, cell);
+    return next === 0 ? this.occupied(0, cell) || this.hasSlab(0, cell) : this.hasSlab(next, cell);
   }
 
   canPlaceSlab(floor: number, cell: number): PlaceCheck {
-    if (floor === 0) return { ok: false, reason: 'The ground floor needs no floor' };
     if (cell < 0 || cell >= LOT_CELLS) return { ok: false, reason: 'Off the edge of the lot' };
     if (floor >= MAX_FLOORS || floor < -MAX_BASEMENTS) return { ok: false, reason: 'Too far' };
-    if (this.hasSlab(floor, cell)) return { ok: false, reason: 'Already built' };
+    if (this.hasSlab(floor, cell) || (floor === 0 && this.occupied(0, cell))) return { ok: false, reason: 'Already built' };
     if (!this.slabSupported(floor, cell)) {
       return { ok: false, reason: floor > 0 ? 'Needs something underneath' : 'Basements go under the tower' };
     }
@@ -118,7 +133,9 @@ export class Tower extends Phaser.Events.EventEmitter {
 
   canRemoveSlab(floor: number, cell: number): PlaceCheck {
     if (this.occupied(floor, cell)) return { ok: false, reason: 'Remove the room first' };
-    if (this.hasSlab(floor > 0 ? floor + 1 : floor - 1, cell)) {
+    if (floor === 0) {
+      if (this.hasSlab(1, cell) || this.hasSlab(-1, cell)) return { ok: false, reason: 'Remove the floors resting on it first' };
+    } else if (this.hasSlab(floor > 0 ? floor + 1 : floor - 1, cell)) {
       return { ok: false, reason: floor > 0 ? 'Remove the floor above first' : 'Remove the floor below first' };
     }
     return { ok: true };
@@ -146,6 +163,7 @@ export class Tower extends Phaser.Events.EventEmitter {
 
   canPlace(def: RoomDef, floor: number, cell: number): PlaceCheck {
     if (def.kind === 'lobby') return { ok: false, reason: 'There is only one lobby' };
+    if ((def.stars ?? 1) > this.stars) return { ok: false, reason: `Unlocks at ${def.stars} stars` };
     if (cell < 0 || cell + def.width > LOT_CELLS) return { ok: false, reason: 'Off the edge of the lot' };
     if (floor >= MAX_FLOORS || floor < -MAX_BASEMENTS) return { ok: false, reason: 'Too far' };
     for (let c = cell; c < cell + def.width; c++) {
@@ -172,7 +190,9 @@ export class Tower extends Phaser.Events.EventEmitter {
     if (room.def.kind === 'lobby') return { ok: false, reason: "The lobby can't be demolished" };
     if (room.floor === 0) {
       for (let c = room.cell; c < room.cell + room.def.width; c++) {
-        if (this.hasSlab(1, c) || this.hasSlab(-1, c)) return { ok: false, reason: 'Remove the floors resting on it first' };
+        if (!this.hasSlab(0, c) && (this.hasSlab(1, c) || this.hasSlab(-1, c))) {
+          return { ok: false, reason: 'Remove the floors resting on it first' };
+        }
       }
     }
     return { ok: true };
@@ -207,6 +227,36 @@ export class Tower extends Phaser.Events.EventEmitter {
     this.emit('income', room, amount);
   }
 
+  serialize(time: number): TowerSave {
+    return {
+      version: 1,
+      money: this.money,
+      time,
+      stars: this.stars,
+      rooms: [...this.rooms.values()].map((r) => ({ id: r.def.id, floor: r.floor, cell: r.cell, earnedTotal: r.earnedTotal })),
+      slabs: [...this.slabs.entries()].map(([f, row]) => [f, row.flatMap((v, i) => (v ? [i] : []))]),
+    };
+  }
+
+  /** Rebuilds a saved tower. Call instead of init() on an empty tower. */
+  restore(save: TowerSave) {
+    this.money = save.money;
+    this.stars = save.stars ?? 1;
+    for (const [f, cells] of save.slabs) {
+      const row = new Array(LOT_CELLS).fill(false);
+      cells.forEach((c) => (row[c] = true));
+      this.slabs.set(f, row);
+    }
+    this.emit('floors');
+    for (const r of save.rooms) {
+      const def = this.theme.rooms.find((d) => d.id === r.id);
+      if (!def) continue;
+      const room = this.add(def, r.floor, r.cell);
+      room.earnedTotal = r.earnedTotal;
+    }
+    this.emit('money', this.money);
+  }
+
   private add(def: RoomDef, floor: number, cell: number) {
     let row = this.grid.get(floor);
     if (!row) this.grid.set(floor, (row = new Array(LOT_CELLS).fill(null)));
@@ -214,5 +264,6 @@ export class Tower extends Phaser.Events.EventEmitter {
     for (let c = cell; c < cell + def.width; c++) row[c] = room.uid;
     this.rooms.set(room.uid, room);
     this.emit('room-added', room);
+    return room;
   }
 }

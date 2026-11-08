@@ -22,6 +22,8 @@ export interface RoomDef {
   spend?: number;
   /** Residents (homes), workers (offices) or visitors at once (food, shops). */
   capacity?: number;
+  /** Star rating needed to build it (default 1). */
+  stars?: number;
 }
 
 export interface Theme {

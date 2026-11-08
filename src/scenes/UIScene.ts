@@ -4,6 +4,7 @@ import { clock, tool, tower, world, type Selection } from '../state';
 import { FLOOR_COST, type PlacedRoom } from '../sim/Tower';
 import { floorName } from '../sim/People';
 import { SPEEDS } from '../sim/Clock';
+import { clearSave } from '../save';
 import type { TowerScene } from './TowerScene';
 
 const BAR_H = 44;
@@ -13,6 +14,8 @@ const PANEL_W = 260;
 
 interface ToolEntry {
   id: string;
+  /** Star rating needed before the tool can be used. */
+  stars: number;
   name: string;
   short: string;
   sub: string;
@@ -25,7 +28,12 @@ export class UIScene extends Phaser.Scene {
   private towerScene!: TowerScene;
   private menu!: Phaser.GameObjects.Container;
   private menuH = 58;
-  private buttons: { id: string; bg: Phaser.GameObjects.Rectangle }[] = [];
+  private buttons: { id: string; bg: Phaser.GameObjects.Rectangle; parts: Phaser.GameObjects.GameObject[] }[] = [];
+  private starsText!: Phaser.GameObjects.Text;
+  private goalText!: Phaser.GameObjects.Text;
+  private newBtn!: Phaser.GameObjects.Text;
+  private newArmed = false;
+  private shownStars = 0;
   private speedButtons: { speed: number; bg: Phaser.GameObjects.Rectangle }[] = [];
   private info!: Phaser.GameObjects.Text;
   private toastText!: Phaser.GameObjects.Text;
@@ -71,17 +79,27 @@ export class UIScene extends Phaser.Scene {
     this.scale.on('resize', () => this.layout());
     this.setInfo();
 
-    this.towerScene.events.on('tool-cancel', () => this.selectTool(null));
+    this.towerScene.events.on('tool-cancel', () => this.selectTool('select'));
     this.towerScene.events.on('toast', (msg: string) => this.toast(msg));
     this.towerScene.events.on('select', (sel: Selection) => this.showSelection(sel));
+    this.towerScene.events.on('promoted', (stars: number, unlocked: string[]) => {
+      const extra = unlocked.length ? ` Unlocked: ${unlocked.join(', ')}.` : '';
+      this.toast(`${'★'.repeat(stars)}  Your tower earned ${stars} stars!${extra}`, 5000);
+    });
     this.input.keyboard?.on('keydown-ESC', () => {
-      if (!this.towerScene.draft) this.selectTool(null);
+      if (!this.towerScene.draft) this.selectTool('select');
     });
     clock.on('speed', () => this.paintSpeeds());
   }
 
   update() {
     this.timeText.setText(`Day ${clock.day}  ${clock.dateLabel}  ${clock.label}`);
+    this.starsText.setText('★'.repeat(tower.stars) + '☆'.repeat(5 - tower.stars));
+    this.goalText.setText(world.rating?.progress() ?? '');
+    if (tower.stars !== this.shownStars) {
+      this.shownStars = tower.stars;
+      this.paintTools();
+    }
     this.updateConfirmBar();
     if (this.selection) this.refreshPanel();
   }
@@ -102,7 +120,27 @@ export class UIScene extends Phaser.Scene {
     const showMoney = (m: number) => this.moneyText.setText(`$${m.toLocaleString()}`).setColor(m < 0 ? '#ff7b6b' : p.hudText);
     showMoney(tower.money);
     tower.on('money', showMoney);
-    this.timeText = this.add.text(380, 14, '', { fontFamily: FONT, fontSize: '15px', color: p.hudText });
+    this.timeText = this.add.text(350, 14, '', { fontFamily: FONT, fontSize: '15px', color: p.hudText });
+    this.starsText = this.add.text(0, 6, '', { fontFamily: FONT, fontSize: '15px', color: '#f2c14e' });
+    this.goalText = this.add.text(0, 25, '', { fontFamily: FONT, fontSize: '11px', color: p.hudText });
+    this.newBtn = this.add
+      .text(0, 22, 'New', { fontFamily: FONT, fontSize: '12px', color: p.hudText, backgroundColor: '#3d2a1c', padding: { x: 8, y: 7 } })
+      .setOrigin(1, 0.5)
+      .setInteractive({ useHandCursor: true });
+    this.newBtn.on('pointerdown', () => {
+      if (!this.newArmed) {
+        this.newArmed = true;
+        this.newBtn.setText('Tap again to start over').setBackgroundColor('#8f3b1f');
+        this.time.delayedCall(3000, () => {
+          this.newArmed = false;
+          this.newBtn.setText('New').setBackgroundColor('#3d2a1c');
+        });
+        return;
+      }
+      clearSave();
+      (window as unknown as { orbzNoSave?: boolean }).orbzNoSave = true;
+      location.reload();
+    });
 
     this.speedGroup = this.add.container(0, 6);
     const labels = ['❚❚', '1×', '2×', '4×'];
@@ -127,11 +165,12 @@ export class UIScene extends Phaser.Scene {
 
   private buildMenu() {
     this.entries = [
-      { id: 'floor', name: 'Floor', short: 'Floor', sub: `$${FLOOR_COST}/cell`, color: 0x7a5232, desc: 'Lay empty floor first, then put rooms on it. Drag the gold handles to resize.' },
+      { id: 'select', stars: 1, name: 'Select', short: 'Select', sub: 'inspect', color: 0xf2c14e, desc: 'Tap a room or monster to see who is there, what it earns and what it needs.' },
+      { id: 'floor', stars: 1, name: 'Floor', short: 'Floor', sub: `$${FLOOR_COST}/cell`, color: 0x7a5232, desc: 'Lay empty floor first, then put rooms on it. Drag the gold handles to resize.' },
       ...theme.rooms
         .filter((r) => r.kind !== 'lobby')
-        .map((r) => ({ id: r.id, name: r.name, short: r.short, sub: `$${r.cost.toLocaleString()}`, color: r.color, desc: r.description })),
-      { id: 'demolish', name: 'Demolish', short: 'Demolish', sub: 'refund 50%', color: 0x8f3b1f, desc: 'Tear down a room or an empty floor.' },
+        .map((r) => ({ id: r.id, stars: r.stars ?? 1, name: r.name, short: r.short, sub: `$${r.cost.toLocaleString()}`, color: r.color, desc: r.description })),
+      { id: 'demolish', stars: 1, name: 'Demolish', short: 'Demolish', sub: 'refund 50%', color: 0x8f3b1f, desc: 'Tear down a room or an empty floor.' },
     ];
     this.menu = this.add.container(0, 0);
   }
@@ -158,12 +197,16 @@ export class UIScene extends Phaser.Scene {
       const sw = this.add.rectangle(x + 7, y + 7, 12, bh - 14, e.color).setOrigin(0).setStrokeStyle(1, 0x000000, 0.6);
       const name = this.add.text(x + 25, y + 6, e.short, { fontFamily: FONT, fontSize: '12px', color: p.hudText });
       const cost = this.add.text(x + 25, y + 23, e.sub, { fontFamily: FONT, fontSize: '11px', color: p.accentText });
+      const lock = this.add.text(x + bw - 6, y + 23, `★${e.stars}`, { fontFamily: FONT, fontSize: '11px', color: '#f2c14e' }).setOrigin(1, 0);
       btn.setInteractive({ useHandCursor: true })
         .on('pointerover', () => this.setInfo(`${e.name}: ${e.desc}`))
         .on('pointerout', () => this.setInfo())
-        .on('pointerdown', () => this.selectTool(tool.current === e.id ? null : e.id));
-      this.menu.add([btn, sw, name, cost]);
-      this.buttons.push({ id: e.id, bg: btn });
+        .on('pointerdown', () => {
+          if (e.stars > tower.stars) return this.toast(`${e.name} unlocks at ${e.stars} stars. ${world.rating?.progress() ?? ''}`);
+          this.selectTool(tool.current === e.id ? 'select' : e.id);
+        });
+      this.menu.add([btn, sw, name, cost, lock]);
+      this.buttons.push({ id: e.id, bg: btn, parts: [sw, name, cost, lock] });
     });
     this.paintTools();
   }
@@ -171,21 +214,28 @@ export class UIScene extends Phaser.Scene {
   private paintTools() {
     for (const b of this.buttons) {
       const on = b.id === tool.current;
+      const entry = this.entries.find((e) => e.id === b.id)!;
+      const locked = entry.stars > tower.stars;
       b.bg.setStrokeStyle(2, on ? GOLD : 0x5c3c24).setFillStyle(on ? 0x5c3c24 : 0x3d2a1c);
+      b.parts.forEach((o, i) => {
+        const go = o as Phaser.GameObjects.Text;
+        if (i === 3) go.setVisible(locked);
+        else go.setAlpha(locked ? 0.35 : 1);
+      });
     }
   }
 
   private selectTool(id: string | null) {
-    tool.current = id;
+    tool.current = id ?? 'select';
     this.paintTools();
     this.towerScene.toolChanged();
     this.setInfo();
-    if (id) this.closePanel();
+    if (tool.current !== 'select') this.closePanel();
   }
 
   private setInfo(text?: string) {
     const entry = this.entries.find((e) => e.id === tool.current);
-    const idle = !entry
+    const idle = !entry || entry.id === 'select'
       ? 'Tap a room or monster to inspect it · Pick a tool below to build · Drag to pan · Pinch or wheel to zoom · Space pauses'
       : entry.id === 'demolish'
         ? 'Tap what you want to demolish, then tap ✓ to confirm'
@@ -346,17 +396,22 @@ export class UIScene extends Phaser.Scene {
     this.topBg.setSize(w, BAR_H);
     this.topLine.setSize(w, 3);
     this.speedGroup.setX(w - 4 * 46 - 6);
-    // Hide the clock text when the bar is too narrow to fit it beside the speed buttons.
-    this.timeText.setVisible(w > 760);
+    this.newBtn.setX(w - 4 * 46 - 14);
+    this.starsText.setX(w - 4 * 46 - 230);
+    this.goalText.setX(w - 4 * 46 - 230);
+    // Drop lower-priority text when the bar is too narrow.
+    this.timeText.setVisible(w > 860);
+    this.goalText.setVisible(w > 640);
+    this.starsText.setVisible(w > 640);
     this.layoutMenu(w, h);
     this.info.setPosition(8, h - this.menuH - 6).setWordWrapWidth(w - 16);
     this.toastText.setX(w / 2);
     this.panel.setX(w - PANEL_W - 8);
   }
 
-  private toast(msg: string) {
+  private toast(msg: string, ms = 2600) {
     this.toastText.setText(msg).setVisible(true);
     this.toastTimer?.remove();
-    this.toastTimer = this.time.delayedCall(2600, () => this.toastText.setVisible(false));
+    this.toastTimer = this.time.delayedCall(ms, () => this.toastText.setVisible(false));
   }
 }
