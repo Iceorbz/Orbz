@@ -55,18 +55,4 @@ export function buildTextures(scene: Phaser.Scene, theme: Theme) {
   leaf.generateTexture('leaf', 6, 6);
   leaf.destroy();
 
-  // Pumpkin decor block.
-  const pk = scene.make.graphics({ x: 0, y: 0 }, false);
-  pk.fillStyle(0x3f6b2a, 1); pk.fillRect(6, 0, 4, 4);
-  pk.fillStyle(0xd9822b, 1); pk.fillRect(0, 4, 16, 12);
-  pk.fillStyle(0xb5641c, 1); pk.fillRect(4, 4, 2, 12); pk.fillRect(10, 4, 2, 12);
-  pk.generateTexture('pumpkin', 16, 16);
-  pk.destroy();
-
-  // Hay bale decor block.
-  const hay = scene.make.graphics({ x: 0, y: 0 }, false);
-  hay.fillStyle(0xe2c15a, 1); hay.fillRect(0, 0, 16, 12);
-  hay.fillStyle(0xb8962b, 1); hay.fillRect(0, 4, 16, 2); hay.fillRect(4, 0, 2, 12);
-  hay.generateTexture('hay', 16, 12);
-  hay.destroy();
 }

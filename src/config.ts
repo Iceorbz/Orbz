@@ -1,6 +1,6 @@
 /** World layout constants. One "cell" is the smallest horizontal unit a room can occupy. */
 export const CELL_W = 16;
-export const FLOOR_H = 48;
+export const FLOOR_H = 64;
 /** Number of cells across the buildable lot. */
 export const LOT_CELLS = 64;
 /** Floors above ground the camera can scroll to. */
