@@ -22,7 +22,7 @@ export const thanksgiving: Theme = {
   particleColors: [0xc8532b, 0xe08a2e, 0xb8862b, 0x8f3b1f],
   rooms: [
     {
-      id: 'lobby', name: 'Gourd Lobby', width: 4, cost: 0, color: 0xa8743f, accent: 0xe08a2e,
+      id: 'lobby', name: 'Gourd Lobby', width: 16, cost: 0, color: 0xa8743f, accent: 0xe08a2e,
       kind: 'lobby', description: 'Hay bales and a pumpkin welcome mat.',
     },
     {

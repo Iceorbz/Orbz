@@ -27,6 +27,10 @@ const COLORS: Record<string, number> = {
   w: 0xf1ead8, // wax white
   u: 0x7b3f8c, // grape purple
   n: 0xe8e0d0, // bone
+  c: 0x8a827a, // stone
+  C: 0x645d57, // dark stone
+  m: 0x6b5a6e, // crypt purple
+  e: 0x9ad06a, // screen green
 };
 
 const SPRITES: Record<string, string[]> = {
@@ -131,6 +135,73 @@ const SPRITES: Record<string, string[]> = {
     '..oOO.',
     '.nn...',
     'nn....',
+  ],
+  coffin: [
+    '..hhhhhhhhhhhh..',
+    '.hpppppppppppph.',
+    'hppppppnnpppppph',
+    'hpppppnnnnppppph',
+    '.hpppppnnppppph.',
+    '..hhhhhhhhhhhh..',
+  ],
+  crate: [
+    'hpppphpppph',
+    'pTTTTpTTTTp',
+    'hpppphpppph',
+    'pTTTTpTTTTp',
+    'hpppphpppph',
+  ],
+  monitor: [
+    'kkkkkkkk',
+    'keeGeeek',
+    'keGeeeGk',
+    'keeeeeek',
+    'kkkkkkkk',
+    '...kk...',
+    '..kkkk..',
+  ],
+  chair: [
+    'h....',
+    'h....',
+    'h....',
+    'hhhhh',
+    'h...h',
+    'h...h',
+  ],
+  oven: [
+    'CcccCcccCccc',
+    'cCcccCcccCcc',
+    'ccCkkkkkkCcc',
+    'cCkYyYyYYkCc',
+    'cCkyYyYyykCc',
+    'cCkrRrRrrkCc',
+    'cccCcccCcccc',
+    'CCCCCCCCCCCC',
+  ],
+  turkey: [
+    '...TTTT...',
+    '.TTttttTT.',
+    'TttttttttT',
+    'TtTttttTtT',
+    '.nTTTTTTn.',
+    '..nnnnnn..',
+  ],
+  bookshelf: [
+    'hhhhhhhh',
+    'hrbyRubh',
+    'hhhhhhhh',
+    'hubrryuh',
+    'hhhhhhhh',
+    'hyRbuubh',
+    'hhhhhhhh',
+  ],
+  tombstone: [
+    '.cccc.',
+    'ccCCcc',
+    'cCccCc',
+    'ccCCcc',
+    'cccccc',
+    'gggggg',
   ],
   pie: [
     '.TTTTTT.',
